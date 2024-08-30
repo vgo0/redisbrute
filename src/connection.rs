@@ -1,26 +1,26 @@
 use std::{ 
     net::TcpStream, 
-    process,
     io::{Write, BufReader, BufRead},
     time::Duration
+
 };
 
 pub struct Connection {
     addr: String,
-    stream: TcpStream
+    stream: TcpStream,
 }
 
 impl Connection {
-    pub fn new(host: &String, port: &String) -> Connection {
+    pub fn new(host: &String, port: &String, timeout: Duration) -> Connection {
         assert!(!host.is_empty());
         assert!(!port.is_empty());
 
         let addr = format!("{host}:{port}");
-        let init_stream = Connection::connect(&addr);
+        let init_stream = Connection::connect(&addr, timeout);
 
         Connection {
             addr: addr,
-            stream: init_stream
+            stream: init_stream,
         }
     }
 
@@ -31,7 +31,6 @@ impl Connection {
 
         self.stream.flush().unwrap_or_else(|err| {
             eprintln!("[-] Error flushing socket: {err}");
-            process::exit(1);
         });
 
         Ok(())
@@ -39,18 +38,18 @@ impl Connection {
 
     fn try_receive(&mut self) -> Result<Vec<u8>, String> {
         let mut buf_reader = BufReader::new(&self.stream);
-        
+    
         let received = buf_reader.fill_buf().unwrap_or_else(|err| {
             eprintln!("[-] Unable to read response: {err}");
-            process::exit(1);
+            &[]
         }).to_vec();
     
         buf_reader.consume(received.len());
-        
-        if received.len() == 0 {
-            return Err("Empty response buffer".to_string())
+    
+        if received.is_empty() {
+            return Err("Empty response buffer".to_string());
         }
-
+    
         Ok(received)
     }
 
@@ -76,24 +75,25 @@ impl Connection {
     }
 
     fn reconnect(&mut self) {
-        self.stream = Connection::connect(&self.addr);
+        // Unwrap the Option<Duration> to get Duration, or use a default value of 5 seconds
+        let timeout = self.stream.read_timeout().unwrap_or(Some(Duration::from_secs(5))).unwrap();
+        self.stream = Connection::connect(&self.addr, timeout);
     }
+    
 
-    fn connect(addr: &String) -> TcpStream {
+    fn connect(addr: &String, timeout: Duration) -> TcpStream {
         let stream = TcpStream::connect(addr).unwrap_or_else(|err| {
             eprintln!("[-] Error connecting to address {addr}: {err}");
-            process::exit(1);
+            std::process::exit(1);
         });
 
-        if let Err(err) = stream.set_read_timeout(Some(Duration::new(15, 0))) {
+        stream.set_read_timeout(Some(timeout)).unwrap_or_else(|err| {
             eprintln!("[-] Error setting connection read timeout: {err}");
-            process::exit(1);
-        }
+        });
 
-        if let Err(err) = stream.set_write_timeout(Some(Duration::new(15, 0))) {
+        stream.set_write_timeout(Some(timeout)).unwrap_or_else(|err| {
             eprintln!("[-] Error setting connection write timeout: {err}");
-            process::exit(1);
-        }
+        });
 
         stream
     }
